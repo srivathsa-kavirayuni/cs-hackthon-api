@@ -14,11 +14,13 @@ const API_PARAMS = {
 
 async function getCompanyInfo(id) {
     let currentCompanyResults = await ExecuteAsAsync(getCompanyReport(id, API_ROUTE.REPORT));
+    let creditScore  = await ExecuteAsAsync(getCreditScore(id)); 
     // console.log(JSON.stringify(result));
     return new CompanyResponse(
         currentCompanyResults.global_index?.global_index_current?.company_name ? currentCompanyResults.global_index.global_index_current.company_name : "",
         currentCompanyResults.global_index?.global_index_current?.cs_company_id ? currentCompanyResults.global_index.global_index_current.cs_company_id : "",
-        currentCompanyResults.global_index?.global_index_current?.credit_score ? currentCompanyResults.global_index?.global_index_current?.credit_score : "N/A", 
+        //currentCompanyResults.global_index?.global_index_current?.credit_score ? currentCompanyResults.global_index?.global_index_current?.credit_score : "N/A", 
+        creditScore ? creditScore : currentCompanyResults.global_index.global_index_current.credit_score,
         currentCompanyResults.global_index?.global_index_current?.country_code ? currentCompanyResults.global_index?.global_index_current?.country_code : "",
         currentCompanyResults.global_index?.global_index_current?.city ? currentCompanyResults.global_index?.global_index_current?.city : "",
         currentCompanyResults.global_index?.global_index_current?.turnover ? currentCompanyResults.global_index?.global_index_current?.turnover: "",
@@ -43,7 +45,7 @@ async function getRecommendedCompanies(id) {
     let recommendedCompanies = [];
     // filter criteria => country, city & nearest credit score
     const creditScore = currentCompanyResults.creditScore;
-    let result = await ExecuteAsAsync(searchCompanies(currentCompanyResults.countryCode, currentCompanyResults.city, creditScore));
+    let result = await ExecuteAsAsync(searchCompanies(id, currentCompanyResults.countryCode, currentCompanyResults.city, creditScore));
     if (result.hits && result.hits.hits && result.hits.hits.length > 0) {
         for(let company in result.hits.hits) {
             let companyDetails = result.hits.hits[company]["_source"];
@@ -89,20 +91,55 @@ function ExecuteAsAsync(asyncMethod) {
     });
 }
 
-async function searchCompanies(countryCode, city, creditScore) {
-    let local_body = JSON.stringify({
+async function getCreditScore(cs_company_id) {
+  let body = JSON.stringify({
+    "query" : {
+        "term" : {
+            "CS_COMPANY_ID.keyword" : cs_company_id
+        }
+    }
+  });
+  let result = await axios.post(CONFIG.ELASTIC_URL + "/_search", body);
+  return result.data.hits.hits[0]['_source'].CREDIT_SCORE;
+}
+
+async function searchCompanies(cs_company_id, countryCode, city, creditScore) {
+    let local_body = JSON.stringify({"query": {
+      "function_score": {
         "query": {
           "bool": {
-            "should" : [
-              {"match": {"COUNTRY": countryCode}},
-              {"match": {"TOWN": city}},
-              { "term" : { "CREDIT_SCORE.keyword" :  creditScore }},
-              { "range": {"CREDIT_SCORE": {"lt": creditScore + 100,"gte": creditScore }}}
+            "should": [
+              {
+                "match": {
+                  "COUNTRY": countryCode
+                }
+              },
+              {
+                "match": {
+                  "TOWN": city
+                }
+              }
+            ],
+            "must_not" : [ 
+              { "term" : { "CS_COMPANY_ID.keyword" : cs_company_id}}
             ]
           }
         },
-        "size": 10
-      });
+        "functions": [
+          {
+            "exp": {
+              "CREDIT_SCORE": {
+                "origin": creditScore,
+                "scale": "1",
+                "decay": 0.999
+              }
+            }
+          }
+        ]
+      }
+    },
+    "size" : 10
+  });
     let result = await axios.post(CONFIG.ELASTIC_URL + "/_search", local_body);
       if (result && result.status == 200 && result.data.hits && result.data.hits.total > 0) {
         return result.data;
