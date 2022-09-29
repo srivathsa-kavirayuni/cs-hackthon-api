@@ -44,6 +44,6 @@ app.get('/company/:id', async (req,res) => {
     }
 })
 
-app.listen(CONFIG.APP_PORT, () => {
+app.listen(.listen(process.env.PORT || CONFIG.APP_PORT), () => {
   console.log(`Example app listening on port ${CONFIG.APP_PORT}`)
 })
